@@ -98,13 +98,11 @@ O sistema implementa os seguintes recursos nativos no SGBD (PostgreSQL) a fim de
 * `valor_vendido` (decimal/numeric)
 
 ---
-## Diagrama Entidade-Relacionamento
-
-![DER](AutoReciclaDER.png)
 
 ## 📐 Diagrama Entidade-Relacionamento (DER)
 
-Colocar Imagem do DER Aqui;
+![DER](AutoReciclaDER.png)
+
 
 
 ## 🛠️ Tecnologias Utilizadas
