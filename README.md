@@ -6,7 +6,7 @@ Trabalho Final apresentado à disciplina de **Banco de Dados II** como requisito
 
 ## 👥 Colaboradores
 * **[Nicolas Damasceno / Link do GitHub: https://github.com/NicolasDamasceno]**
-* **[Renato  / Link do GitHub]**
+* **[Renato  / Link do GitHub: https://github.com/renPaiva-dev]**
 
 ---
 
