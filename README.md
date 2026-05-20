@@ -79,8 +79,8 @@ O sistema implementa os seguintes recursos nativos no SGBD (PostgreSQL) a fim de
 * `id_comp` (PK - int)
 * `id_peca` (FK - int)
 * `id_modelo` (FK - int)
-* `ano_inicio` (int)
-* `ano_fim` (int)
+* `ano_inicio` (date)
+* `ano_fim` (date)
 
 ### 9. NOTA (Entidade Consolidada de Atendimento e Venda)
 * `id_nota` (PK - int)
