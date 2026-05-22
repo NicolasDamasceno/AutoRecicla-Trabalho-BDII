@@ -71,9 +71,10 @@ O sistema implementa os seguintes recursos nativos no SGBD (PostgreSQL) a fim de
 * `id_peca` (PK - int)
 * `nome_peca` (varchar)
 * `valor` (decimal/numeric)
-* `status` (varchar) — *[Disponível, Reservada, Vendida, Baixada]*
+* `estado_conservacao` (varchar) — *[Novo, Seminovo, usado]*
 * `id_categoria` (FK - int)
 * `id_filial` (FK - int)
+* `quantidade` (int)
 
 ### 8. COMPATIBILIDADE (Tabela Associativa N:N)
 * `id_comp` (PK - int)
