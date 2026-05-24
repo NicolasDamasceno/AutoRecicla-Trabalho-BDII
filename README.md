@@ -97,6 +97,7 @@ O sistema implementa os seguintes recursos nativos no SGBD (PostgreSQL) a fim de
 * `id_nota` (FK - int)
 * `id_peca` (FK - int)
 * `valor_vendido` (decimal/numeric)
+* `quantidade` (int)
 
 ---
 
