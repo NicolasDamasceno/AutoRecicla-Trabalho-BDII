@@ -39,24 +39,25 @@ O sistema implementa os seguintes recursos nativos no SGBD (PostgreSQL) a fim de
 * `nome_unidade` (varchar)
 * `cidade` (varchar)
 * `endereco` (varchar)
-* `cnpj` (varchar)
+* `cnpj` (varchar, unique)
 
 ### 2. VENDEDOR
 * `id_vendedor` (PK - int)
 * `nome` (varchar)
-* `cpf` (varchar)
+* `cpf` (varchar, unique)
 * `id_filial` (FK - int)
+* `ativo` (boolean, default true)
 
 ### 3. CLIENTE
 * `id_cliente` (PK - int)
 * `nome` (varchar)
-* `cpf_cnpj` (varchar)
+* `cpf_cnpj` (varchar, unique)
 * `telefone` (varchar)
 * `email` (varchar)
 
 ### 4. MARCA
 * `id_marca` (PK - int)
-* `nome_marca` (varchar)
+* `nome_marca` (varchar, unique)
 
 ### 5. MODELO
 * `id_modelo` (PK - int)
@@ -65,13 +66,13 @@ O sistema implementa os seguintes recursos nativos no SGBD (PostgreSQL) a fim de
 
 ### 6. CATEGORIA
 * `id_categoria` (PK - int)
-* `nome_categoria` (varchar)
+* `nome_categoria` (varchar, unique)
 
 ### 7. PEÇA
 * `id_peca` (PK - int)
 * `nome_peca` (varchar)
-* `valor` (decimal/numeric)
-* `estado_conservacao` (varchar) — *[Novo, Seminovo, usado]*
+* `valor` (numeric(10,2))
+* `estado_conservacao` (varchar) — *[Novo, Seminovo, Usado]*
 * `id_categoria` (FK - int)
 * `id_filial` (FK - int)
 * `quantidade` (int)
@@ -80,23 +81,23 @@ O sistema implementa os seguintes recursos nativos no SGBD (PostgreSQL) a fim de
 * `id_comp` (PK - int)
 * `id_peca` (FK - int)
 * `id_modelo` (FK - int)
-* `ano_inicio` (date)
-* `ano_fim` (date)
+* `ano_inicio` (smallint)
+* `ano_fim` (smallint)
 
 ### 9. NOTA (Entidade Consolidada de Atendimento e Venda)
 * `id_nota` (PK - int)
-* `data_criacao` (date/timestamp)
-* `data_venda` (date/timestamp - null se em aberto)
+* `data_criacao` (timestamp, default now())
+* `data_venda` (timestamp - null se em aberto)
 * `status` (varchar) — *[Aberto, Finalizado, Cancelado]*
-* `forma_pagamento` (varchar - null se em aberto)
-* `valor_total` (decimal/numeric - calculado na finalização)
+* `forma_pagamento` (varchar - null se em aberto) — *[Pix, Dinheiro, Cartão de Crédito, Cartão de Débito, Boleto]*
+* `valor_total` (numeric(10,2) - calculado via trigger)
 * `id_cliente` (FK - int)
 * `id_vendedor` (FK - int)
 
 ### 10. NOTA_PEÇA (Tabela Associativa N:N)
 * `id_nota` (FK - int)
 * `id_peca` (FK - int)
-* `valor_vendido` (decimal/numeric)
+* `valor_vendido` (numeric(10,2))
 * `quantidade` (int)
 
 ---
