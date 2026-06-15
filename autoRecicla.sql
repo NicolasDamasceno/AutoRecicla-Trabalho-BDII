@@ -1,5 +1,4 @@
 
-
 CREATE TABLE filial (
     id_filial    SERIAL PRIMARY KEY,
     nome_unidade VARCHAR(100) NOT NULL,
@@ -453,3 +452,601 @@ CREATE OR REPLACE TRIGGER tg_bloquear_delete_nota
     EXECUTE FUNCTION fn_bloquear_delete_nota();
 
 
+-- Funções básicas de Funcionamento:
+-- ============================================================
+--  ALTER TABLE — adiciona cargo ao vendedor
+-- ============================================================
+
+ALTER TABLE vendedor
+    ADD COLUMN cargo VARCHAR(20) NOT NULL DEFAULT 'Vendedor'
+        CHECK (cargo IN ('Vendedor', 'Gerente', 'Admin'));
+
+
+-- ============================================================
+--  FUNÇÃO AUXILIAR — fn_buscar_filial_executante
+--  Retorna o id_filial do executante e valida sua existência.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION fn_buscar_filial_executante(
+    p_id_executante INT
+)
+RETURNS INT
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_filial INT;
+BEGIN
+    SELECT id_filial INTO v_filial
+      FROM vendedor
+     WHERE id_vendedor = p_id_executante;
+
+    IF v_filial IS NULL THEN
+        RAISE EXCEPTION 'Executante % não encontrado.', p_id_executante
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    RETURN v_filial;
+END;
+$$;
+
+
+-- ============================================================
+--  fn_criar_filial — Admin
+--  Cria uma nova filial validando nome único e CNPJ.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION fn_criar_filial(
+    p_nome_filial VARCHAR,
+    p_cidade      VARCHAR,
+    p_endereco    VARCHAR,
+    p_cnpj        VARCHAR,
+    p_id_executante INT
+)
+RETURNS VOID
+LANGUAGE plpgsql AS $$
+BEGIN
+   
+    IF (SELECT cargo FROM vendedor WHERE id_vendedor = p_id_executante) <> 'Admin' THEN
+        RAISE EXCEPTION 'Apenas o Administrador pode criar novas filiais.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF CHAR_LENGTH(TRIM(p_cnpj)) <> 18 THEN
+        RAISE EXCEPTION 'CNPJ inválido. Formato esperado: XX.XXX.XXX/XXXX-XX.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM filial WHERE nome_unidade = p_nome_filial) THEN
+        RAISE EXCEPTION 'Já existe uma filial com o nome "%".', p_nome_filial
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM filial WHERE cnpj = p_cnpj) THEN
+        RAISE EXCEPTION 'Já existe uma filial com o CNPJ "%".', p_cnpj
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    INSERT INTO filial
+    VALUES (DEFAULT, p_nome_filial, p_cidade, p_endereco, p_cnpj);
+
+    RAISE NOTICE 'Nova filial "%" cadastrada com sucesso.', p_nome_filial;
+END;
+$$;
+
+
+-- ============================================================
+--  fn_registrar_categoria — Admin
+--  Cadastra nova categoria de peça validando unicidade.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION fn_registrar_categoria(
+    p_nova_categoria VARCHAR,
+    p_id_executante  INT
+)
+RETURNS VOID
+LANGUAGE plpgsql AS $$
+BEGIN
+  
+    IF (SELECT cargo FROM vendedor WHERE id_vendedor = p_id_executante) <> 'Admin' THEN
+        RAISE EXCEPTION 'Apenas o Administrador pode criar novas categorias.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM categoria WHERE nome_categoria = p_nova_categoria) THEN
+        RAISE EXCEPTION 'A categoria "%" já existe.', p_nova_categoria
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    INSERT INTO categoria  VALUES (DEFAULT, p_nova_categoria);
+
+    RAISE NOTICE 'Categoria "%" cadastrada com sucesso.', p_nova_categoria;
+END;
+$$;
+
+
+-- ============================================================
+--  fn_registrar_marca — Admin
+--  Cadastra nova marca de veículo validando unicidade.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION fn_registrar_marca(
+    p_nova_marca    VARCHAR,
+    p_id_executante INT
+)
+RETURNS VOID
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF (SELECT cargo FROM vendedor WHERE id_vendedor = p_id_executante) <> 'Admin' THEN
+        RAISE EXCEPTION 'Apenas o Administrador pode cadastrar novas marcas.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM marca WHERE nome_marca = p_nova_marca) THEN
+        RAISE EXCEPTION 'A marca "%" já está cadastrada.', p_nova_marca
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    INSERT INTO marca VALUES (DEFAULT, p_nova_marca);
+
+    RAISE NOTICE 'Marca "%" cadastrada com sucesso.', p_nova_marca;
+END;
+$$;
+
+
+-- ============================================================
+--  fn_registrar_modelo — Admin
+--  Cadastra novo modelo vinculado a uma marca existente.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION fn_registrar_modelo(
+    p_nome_modelo   VARCHAR,
+    p_id_marca      INT,
+    p_id_executante INT
+)
+RETURNS VOID
+LANGUAGE plpgsql AS $$
+BEGIN
+
+    IF (SELECT cargo FROM vendedor WHERE id_vendedor = p_id_executante) <> 'Admin' THEN
+        RAISE EXCEPTION 'Apenas o Administrador pode cadastrar novos modelos.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM marca WHERE id_marca = p_id_marca) THEN
+        RAISE EXCEPTION 'Marca % não encontrada.', p_id_marca
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM modelo
+         WHERE nome_modelo = p_nome_modelo
+           AND id_marca    = p_id_marca
+    ) THEN
+        RAISE EXCEPTION 'O modelo "%" já está cadastrado para essa marca.', p_nome_modelo
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    INSERT INTO modelo VALUES (DEFAULT, p_nome_modelo, p_id_marca);
+
+    RAISE NOTICE 'Modelo "%" cadastrado com sucesso.', p_nome_modelo;
+END;
+$$;
+
+
+-- ============================================================
+--  fn_registrar_peca — Vendedor, Gerente, Admin
+--  Cadastra nova peça na filial do executante.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION fn_registrar_peca(
+    p_nome_peca          VARCHAR,
+    p_valor              NUMERIC,
+    p_estado_conservacao VARCHAR,
+    p_quantidade         INT,
+    p_id_categoria       INT,
+    p_id_filial          INT,
+    p_id_executante      INT
+)
+RETURNS INT
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_id_peca         INT;
+    v_filial_executante INT;
+BEGIN
+    -- Verifica executante e busca sua filial via função auxiliar
+    v_filial_executante := fn_buscar_filial_executante(p_id_executante);
+
+    IF v_filial_executante <> p_id_filial THEN
+        RAISE EXCEPTION 'O executante não pode cadastrar peças em outra filial.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- Validações de valor
+    IF p_valor <= 0 THEN
+        RAISE EXCEPTION 'O valor da peça deve ser maior que zero.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF p_quantidade < 0 THEN
+        RAISE EXCEPTION 'A quantidade não pode ser negativa.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF p_estado_conservacao NOT IN ('Novo', 'Seminovo', 'Usado') THEN
+        RAISE EXCEPTION 'Estado de conservação inválido: "%". Use: Novo, Seminovo ou Usado.',
+            p_estado_conservacao
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- Validações de existência (FK)
+    IF NOT EXISTS (SELECT 1 FROM categoria WHERE id_categoria = p_id_categoria) THEN
+        RAISE EXCEPTION 'Categoria % não encontrada.', p_id_categoria
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM filial WHERE id_filial = p_id_filial) THEN
+        RAISE EXCEPTION 'Filial % não encontrada.', p_id_filial
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- Validação de unicidade
+    IF EXISTS (
+        SELECT 1 FROM peca
+         WHERE nome_peca          = p_nome_peca
+           AND estado_conservacao = p_estado_conservacao
+           AND id_filial          = p_id_filial
+    ) THEN
+        RAISE EXCEPTION 'Já existe uma peça "%" com estado "%" cadastrada nessa filial.',
+            p_nome_peca, p_estado_conservacao
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    INSERT INTO peca
+    VALUES (DEFAULT, p_nome_peca, p_valor, p_estado_conservacao, p_quantidade, p_id_categoria, p_id_filial)
+    RETURNING id_peca INTO v_id_peca;
+
+    RAISE NOTICE 'Peça "%" cadastrada com sucesso. ID: %', p_nome_peca, v_id_peca;
+    RETURN v_id_peca;
+END;
+$$;
+
+
+-- ============================================================
+--  fn_registrar_comp_peca — Vendedor, Gerente, Admin
+--  Registra compatibilidade de uma peça com modelo/ano.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION fn_registrar_comp_peca(
+    p_id_peca       INT,
+    p_id_modelo     INT,
+    p_ano_inicio    SMALLINT,
+    p_ano_fim       SMALLINT,
+    p_id_executante INT
+)
+RETURNS INT
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_id_nova_comp      INT;
+    v_filial_executante INT;
+    v_filial_peca       INT;
+BEGIN
+ 
+    v_filial_executante := fn_buscar_filial_executante(p_id_executante);
+
+    -- Validações de existência
+    IF NOT EXISTS (SELECT 1 FROM peca WHERE id_peca = p_id_peca) THEN
+        RAISE EXCEPTION 'Peça % não encontrada.', p_id_peca
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM modelo WHERE id_modelo = p_id_modelo) THEN
+        RAISE EXCEPTION 'Modelo % não encontrado.', p_id_modelo
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- Executante só pode adicionar compatibilidade de peças da sua filial
+    SELECT id_filial INTO v_filial_peca FROM peca WHERE id_peca = p_id_peca;
+
+    IF v_filial_executante <> v_filial_peca THEN
+        RAISE EXCEPTION 'O executante não pode alterar peças de outra filial.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- Validação de intervalo de anos
+    IF p_ano_inicio > p_ano_fim THEN
+        RAISE EXCEPTION 'O ano de início % não pode ser maior que o ano fim %.', p_ano_inicio, p_ano_fim
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- Validação de unicidade
+    IF EXISTS (
+        SELECT 1 FROM compatibilidade
+         WHERE id_peca    = p_id_peca
+           AND id_modelo  = p_id_modelo
+           AND ano_inicio = p_ano_inicio
+           AND ano_fim    = p_ano_fim
+    ) THEN
+        RAISE EXCEPTION 'Compatibilidade já cadastrada para esse modelo e intervalo de anos.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    INSERT INTO compatibilidade
+    VALUES (DEFAULT, p_id_peca, p_id_modelo, p_ano_inicio, p_ano_fim)
+    RETURNING id_comp INTO v_id_nova_comp;
+
+    RAISE NOTICE 'Compatibilidade cadastrada com sucesso. ID: %', v_id_nova_comp;
+    RETURN v_id_nova_comp;
+END;
+$$;
+
+
+-- ============================================================
+--  fn_ajustar_estoque — Vendedor, Gerente, Admin
+--  Ajusta manualmente o estoque de uma peça da própria filial.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION fn_ajustar_estoque(
+    p_id_peca_ajuste INT,
+    p_qtd_nova       INT,
+    p_id_executante  INT
+)
+RETURNS TABLE(peca_id INT, quantidade_atual INT)
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_filial_executante INT;
+    v_filial_peca       INT;
+BEGIN
+    v_filial_executante := fn_buscar_filial_executante(p_id_executante);
+
+    IF NOT EXISTS (SELECT 1 FROM peca WHERE id_peca = p_id_peca_ajuste) THEN
+        RAISE EXCEPTION 'Peça % não encontrada.', p_id_peca_ajuste
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF p_qtd_nova < 0 THEN
+        RAISE EXCEPTION 'A quantidade não pode ser negativa.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    SELECT id_filial INTO v_filial_peca FROM peca WHERE id_peca = p_id_peca_ajuste;
+
+    IF v_filial_executante <> v_filial_peca THEN
+        RAISE EXCEPTION 'O executante não pode ajustar estoque de outra filial.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    RETURN QUERY
+        UPDATE peca
+           SET quantidade = p_qtd_nova
+         WHERE id_peca = p_id_peca_ajuste
+        RETURNING id_peca, quantidade;
+END;
+$$;
+
+
+-- ============================================================
+--  fn_contratar_vendedor — Gerente, Admin
+--  Cadastra novo vendedor na filial do executante.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION fn_contratar_vendedor(
+    p_nome          VARCHAR,
+    p_cpf           VARCHAR,
+    p_id_filial     INT,
+    p_id_executante INT
+)
+RETURNS INT
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_id_vendedor_novo  INT;
+    v_filial_executante INT;
+    v_cargo_executante  VARCHAR;
+BEGIN
+    v_filial_executante := fn_buscar_filial_executante(p_id_executante);
+
+    -- Apenas Gerente ou Admin podem contratar
+    SELECT cargo INTO v_cargo_executante FROM vendedor WHERE id_vendedor = p_id_executante;
+    IF v_cargo_executante NOT IN ('Gerente', 'Admin') THEN
+        RAISE EXCEPTION 'Apenas Gerente ou Administrador podem contratar vendedores.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF v_cargo_executante = 'Gerente' AND v_filial_executante <> p_id_filial THEN
+        RAISE EXCEPTION 'O Gerente só pode contratar vendedores para a própria filial.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF CHAR_LENGTH(TRIM(p_cpf)) <> 14 THEN
+        RAISE EXCEPTION 'CPF inválido. Formato esperado: XXX.XXX.XXX-XX.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM vendedor WHERE cpf = p_cpf) THEN
+        RAISE EXCEPTION 'Já existe um vendedor com o CPF "%".', p_cpf
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM filial WHERE id_filial = p_id_filial) THEN
+        RAISE EXCEPTION 'Filial % não encontrada.', p_id_filial
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    INSERT INTO vendedor
+    VALUES (DEFAULT, p_nome, p_cpf, p_id_filial, TRUE, 'Vendedor')
+    RETURNING id_vendedor INTO v_id_vendedor_novo;
+
+    RAISE NOTICE 'Vendedor "%" contratado com sucesso. ID: %', p_nome, v_id_vendedor_novo;
+    RETURN v_id_vendedor_novo;
+END;
+$$;
+
+
+-- ============================================================
+--  fn_demitir_vendedor — Gerente, Admin
+--  Desativa um vendedor. Bloqueia se houver notas em aberto
+--  (delegado ao tg_bloquear_desativacao_vendedor).
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION fn_demitir_vendedor(
+    p_cpf_dem       VARCHAR,
+    p_id_executante INT
+)
+RETURNS INT
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_id_vendedor_dem   INT;
+    v_filial_dem        INT;
+    v_filial_executante INT;
+    v_cargo_executante  VARCHAR;
+BEGIN
+    v_filial_executante := fn_buscar_filial_executante(p_id_executante);
+
+    -- Apenas Gerente ou Admin podem demitir
+    SELECT cargo INTO v_cargo_executante FROM vendedor WHERE id_vendedor = p_id_executante;
+    IF v_cargo_executante NOT IN ('Gerente', 'Admin') THEN
+        RAISE EXCEPTION 'Apenas Gerente ou Administrador podem demitir vendedores.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM vendedor WHERE cpf = p_cpf_dem) THEN
+        RAISE EXCEPTION 'Vendedor com CPF "%" não encontrado.', p_cpf_dem
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    SELECT id_vendedor, id_filial INTO v_id_vendedor_dem, v_filial_dem
+      FROM vendedor WHERE cpf = p_cpf_dem;
+
+    IF v_cargo_executante = 'Gerente' AND v_filial_executante <> v_filial_dem THEN
+        RAISE EXCEPTION 'O Gerente só pode demitir vendedores da própria filial.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- O UPDATE dispara o tg_bloquear_desativacao_vendedor automaticamente
+    -- que bloqueia a desativação se houver notas em aberto
+    UPDATE vendedor SET ativo = FALSE WHERE id_vendedor = v_id_vendedor_dem;
+
+    RAISE NOTICE 'Vendedor de ID % desativado com sucesso.', v_id_vendedor_dem;
+    RETURN v_id_vendedor_dem;
+END;
+$$;
+
+
+-- ============================================================
+--  fn_transferir_vendedor — Gerente, Admin
+--  Move vendedor entre filiais sem notas em aberto.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION fn_transferir_vendedor(
+    p_cpf_vendedor  VARCHAR,
+    p_id_filial_org INT,
+    p_id_filial_dest INT,
+    p_id_executante INT
+)
+RETURNS INT
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_id_vendedor_trans INT;
+    v_filial_executante INT;
+    v_cargo_executante  VARCHAR;
+BEGIN
+    v_filial_executante := fn_buscar_filial_executante(p_id_executante);
+
+    -- Apenas Gerente ou Admin podem transferir
+    SELECT cargo INTO v_cargo_executante FROM vendedor WHERE id_vendedor = p_id_executante;
+    IF v_cargo_executante NOT IN ('Gerente', 'Admin') THEN
+        RAISE EXCEPTION 'Apenas Gerente ou Administrador podem transferir vendedores.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF p_id_filial_org = p_id_filial_dest THEN
+        RAISE EXCEPTION 'As filiais de origem e destino não podem ser iguais.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM filial WHERE id_filial = p_id_filial_org) THEN
+        RAISE EXCEPTION 'Filial de origem % não encontrada.', p_id_filial_org
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM filial WHERE id_filial = p_id_filial_dest) THEN
+        RAISE EXCEPTION 'Filial de destino % não encontrada.', p_id_filial_dest
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM vendedor
+         WHERE cpf = p_cpf_vendedor AND id_filial = p_id_filial_org
+    ) THEN
+        RAISE EXCEPTION 'Vendedor com CPF "%" não encontrado na filial de origem %.', 
+            p_cpf_vendedor, p_id_filial_org
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF v_cargo_executante = 'Gerente' AND v_filial_executante <> p_id_filial_org THEN
+        RAISE EXCEPTION 'O Gerente só pode transferir vendedores da própria filial.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- Bloqueia transferência se houver notas em aberto
+    SELECT id_vendedor INTO v_id_vendedor_trans FROM vendedor WHERE cpf = p_cpf_vendedor;
+
+    IF EXISTS (
+        SELECT 1 FROM nota
+         WHERE id_vendedor = v_id_vendedor_trans AND status = 'Aberto'
+    ) THEN
+        RAISE EXCEPTION 'O vendedor possui notas em aberto e não pode ser transferido.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    UPDATE vendedor SET id_filial = p_id_filial_dest WHERE id_vendedor = v_id_vendedor_trans;
+
+    RAISE NOTICE 'Vendedor de ID % transferido para a filial % com sucesso.',
+        v_id_vendedor_trans, p_id_filial_dest;
+    RETURN v_id_vendedor_trans;
+END;
+$$;
+
+
+-- ============================================================
+--  fn_abrir_nota — Vendedor, Gerente, Admin
+--  Cria nova nota. Ativo do vendedor validado pelo trigger.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION fn_abrir_nota(
+    p_id_cliente    INT,
+    p_id_vendedor   INT,
+    p_id_executante INT
+)
+RETURNS INT
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_id_nova_nota      INT;
+    v_filial_executante INT;
+    v_filial_vendedor   INT;
+BEGIN
+    v_filial_executante := fn_buscar_filial_executante(p_id_executante);
+
+    IF NOT EXISTS (SELECT 1 FROM vendedor WHERE id_vendedor = p_id_vendedor) THEN
+        RAISE EXCEPTION 'Vendedor % não encontrado.', p_id_vendedor
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM cliente WHERE id_cliente = p_id_cliente) THEN
+        RAISE EXCEPTION 'Cliente % não encontrado.', p_id_cliente
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    SELECT id_filial INTO v_filial_vendedor FROM vendedor WHERE id_vendedor = p_id_vendedor;
+    IF v_filial_executante <> v_filial_vendedor THEN
+        RAISE EXCEPTION 'O executante não pode abrir notas para vendedores de outra filial.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- INSERT dispara tg_validar_abertura_nota que valida ativo = TRUE
+    INSERT INTO nota
+    VALUES (DEFAULT, p_id_cliente, p_id_vendedor)
+    RETURNING id_nota INTO v_id_nova_nota;
+
+    RAISE NOTICE 'Nota % criada com sucesso.', v_id_nova_nota;
+    RETURN v_id_nova_nota;
+END;
+$$;
