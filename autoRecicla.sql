@@ -272,10 +272,10 @@ BEGIN
         v_id_peca := NEW.id_peca;
     END IF;
 
-    SELECT quantidade INTO v_qtd_atual
-      FROM peca WHERE id_peca = v_id_peca FOR UPDATE;
 
     IF v_delta < 0 THEN
+        SELECT quantidade INTO v_qtd_atual
+        FROM peca WHERE id_peca = v_id_peca FOR UPDATE;
         IF v_qtd_atual + v_delta < 0 THEN
             RAISE EXCEPTION
                 'Estoque insuficiente para a peça % (disponível: %, solicitado: %).',
@@ -1000,7 +1000,7 @@ BEGIN
             USING ERRCODE = 'P0001';
     END IF;
 
-    IF p_forma_pagamento NOT IN ('Pix', 'Dinheiro', 'Cartão de Crédito', 'Cartão de Débito', 'Boleto') THEN
+    IF p_forma_pagamento IS NOT NULL AND p_forma_pagamento NOT IN ('Pix', 'Dinheiro', 'Cartão de Crédito', 'Cartão de Débito', 'Boleto') THEN
         RAISE EXCEPTION 'Forma de pagamento inválida: "%". Use: Pix, Dinheiro, Cartão de Crédito, Cartão de Débito ou Boleto.',
             p_forma_pagamento
             USING ERRCODE = 'P0001';
