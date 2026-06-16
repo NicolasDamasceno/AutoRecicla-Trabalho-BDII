@@ -1,3 +1,5 @@
+
+
 CREATE TABLE filial (
     id_filial    SERIAL PRIMARY KEY,
     nome_unidade VARCHAR(100) NOT NULL,
@@ -122,9 +124,9 @@ CREATE TABLE nota_peca (
 );
 
 
--- ============================================================
+
 --  TRIGGERS
--- ============================================================
+
 
 -- Validar abertura de nota
 
@@ -291,8 +293,44 @@ CREATE OR REPLACE TRIGGER tg_gerenciar_estoque
     EXECUTE FUNCTION fn_gerenciar_estoque();
 
 
--- Recalcular valor_total da nota
+-- registrar cliente
+CREATE OR REPLACE FUNCTION fn_registrar_cliente(
+    p_nome VARCHAR,
+    p_cpf_cnpj VARCHAR,
+    p_telefone VARCHAR,
+    p_email VARCHAR
+)
+RETURNS INT LANGUAGE plpgsql AS $$
+DECLARE
+    v_id_cliente INT;
+BEGIN
 
+    IF EXISTS (
+        SELECT 1
+        FROM cliente
+        WHERE cpf_cnpj = p_cpf_cnpj
+    ) THEN
+        RAISE EXCEPTION
+            'Cliente já cadastrado.';
+    END IF;
+
+    INSERT INTO cliente(
+        nome,
+        cpf_cnpj,
+        telefone,
+        email
+    )
+    VALUES(
+        p_nome,
+        p_cpf_cnpj,
+        p_telefone,
+        p_email
+    )
+    RETURNING id_cliente INTO v_id_cliente;
+
+    RETURN v_id_cliente;
+END;
+$$;
 CREATE OR REPLACE FUNCTION fn_recalcular_total()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE
@@ -312,7 +350,7 @@ BEGIN
     RETURN NEW;
 END;
 $$;
-
+-- Recalcular valor_total da nota
 CREATE OR REPLACE TRIGGER tg_recalcular_total
     AFTER INSERT OR UPDATE OR DELETE ON nota_peca
     FOR EACH ROW
@@ -1018,3 +1056,482 @@ BEGIN
     RAISE NOTICE 'Nota % cancelada.', p_id_nota;
 END;
 $$;
+-- ============================================================
+--  VIEWS — AutoRecicla
+-- ============================================================
+
+
+-- ------------------------------------------------------------
+--  VENDEDOR
+-- ------------------------------------------------------------
+
+-- vw_estoque_filial
+-- Peças com quantidade, estado e valor por filial
+
+CREATE OR REPLACE VIEW vw_estoque_filial AS
+SELECT
+    f.id_filial,
+    f.nome_unidade                  AS filial,
+    f.cidade,
+    p.id_peca,
+    p.nome_peca                     AS peca,
+    cat.nome_categoria              AS categoria,
+    p.estado_conservacao,
+    p.quantidade,
+    p.valor
+FROM peca p
+JOIN filial    f   ON f.id_filial     = p.id_filial
+JOIN categoria cat ON cat.id_categoria = p.id_categoria
+ORDER BY f.nome_unidade, cat.nome_categoria, p.nome_peca;
+
+
+-- vw_historico_cliente
+-- Compras finalizadas de um cliente com detalhe de peças
+
+CREATE OR REPLACE VIEW vw_historico_cliente AS
+SELECT
+    cl.id_cliente,
+    cl.nome                                    AS cliente,
+    n.id_nota,
+    n.data_venda,
+    n.forma_pagamento,
+    n.valor_total,
+    p.id_peca,
+    p.nome_peca                                AS peca,
+    p.estado_conservacao,
+    np.quantidade,
+    np.valor_vendido,
+    (np.quantidade * np.valor_vendido)         AS subtotal
+FROM nota n
+JOIN cliente   cl ON cl.id_cliente = n.id_cliente
+JOIN nota_peca np ON np.id_nota    = n.id_nota
+JOIN peca       p ON p.id_peca     = np.id_peca
+WHERE n.status = 'Finalizado'
+ORDER BY cl.nome, n.data_venda DESC;
+
+
+-- vw_compatibilidade_pecas
+-- Peças disponíveis por marca, modelo e intervalo de ano
+
+CREATE OR REPLACE VIEW vw_compatibilidade_pecas AS
+SELECT
+    f.nome_unidade                  AS filial,
+    ma.nome_marca                   AS marca,
+    mo.nome_modelo                  AS modelo,
+    c.ano_inicio,
+    c.ano_fim,
+    p.id_peca,
+    p.nome_peca                     AS peca,
+    p.estado_conservacao,
+    p.quantidade,
+    p.valor,
+    cat.nome_categoria              AS categoria
+FROM compatibilidade c
+JOIN peca      p   ON p.id_peca       = c.id_peca
+JOIN modelo    mo  ON mo.id_modelo    = c.id_modelo
+JOIN marca     ma  ON ma.id_marca     = mo.id_marca
+JOIN categoria cat ON cat.id_categoria = p.id_categoria
+JOIN filial    f   ON f.id_filial     = p.id_filial
+ORDER BY ma.nome_marca, mo.nome_modelo, c.ano_inicio, p.nome_peca;
+
+
+-- vw_notas_abertas
+-- Notas em aberto com vendedor, cliente e valor parcial acumulado
+
+CREATE OR REPLACE VIEW vw_notas_abertas AS
+SELECT
+    n.id_nota,
+    n.data_criacao,
+    f.nome_unidade                                     AS filial,
+    v.nome                                             AS vendedor,
+    cl.nome                                            AS cliente,
+    cl.telefone,
+    COUNT(np.id_peca)                                  AS total_itens,
+    COALESCE(SUM(np.quantidade * np.valor_vendido), 0) AS valor_parcial
+FROM nota n
+JOIN vendedor  v  ON v.id_vendedor = n.id_vendedor
+JOIN filial    f  ON f.id_filial   = v.id_filial
+JOIN cliente   cl ON cl.id_cliente = n.id_cliente
+LEFT JOIN nota_peca np ON np.id_nota = n.id_nota
+WHERE n.status = 'Aberto'
+GROUP BY
+    n.id_nota, n.data_criacao,
+    f.nome_unidade,
+    v.nome,
+    cl.nome, cl.telefone
+ORDER BY n.data_criacao;
+
+
+-- vw_estoque_baixo
+-- Peças com quantidade zerada ou igual a 1 para reposição
+
+CREATE OR REPLACE VIEW vw_estoque_baixo AS
+SELECT
+    f.id_filial,
+    f.nome_unidade                  AS filial,
+    f.cidade,
+    p.id_peca,
+    p.nome_peca                     AS peca,
+    cat.nome_categoria              AS categoria,
+    p.estado_conservacao,
+    p.quantidade,
+    p.valor
+FROM peca p
+JOIN filial    f   ON f.id_filial     = p.id_filial
+JOIN categoria cat ON cat.id_categoria = p.id_categoria
+WHERE p.quantidade <= 1
+ORDER BY f.nome_unidade, p.quantidade, p.nome_peca;
+
+
+-- ------------------------------------------------------------
+--  GERENTE
+-- ------------------------------------------------------------
+
+-- vw_resumo_vendas_filial
+-- Total vendido, ticket médio e peça mais vendida por filial/período
+CREATE OR REPLACE VIEW vw_resumo_vendas_filial AS
+SELECT
+    f.id_filial,
+    f.nome_unidade                          AS filial,
+    DATE_TRUNC('month', n.data_venda)       AS periodo,
+    COUNT(DISTINCT n.id_nota)               AS total_notas,
+    SUM(n.valor_total)                      AS faturamento,
+    ROUND(AVG(n.valor_total), 2)            AS ticket_medio,
+    (
+        SELECT p2.nome_peca
+        FROM nota_peca np2
+        JOIN nota  n2 ON n2.id_nota  = np2.id_nota
+        JOIN peca  p2 ON p2.id_peca  = np2.id_peca
+        WHERE n2.status   = 'Finalizado'
+          AND p2.id_filial = f.id_filial
+          AND DATE_TRUNC('month', n2.data_venda) = DATE_TRUNC('month', MIN(n.data_venda))
+        GROUP BY p2.nome_peca
+        ORDER BY SUM(np2.quantidade) DESC
+        LIMIT 1
+    )                                       AS peca_mais_vendida
+FROM nota n
+JOIN vendedor v ON v.id_vendedor = n.id_vendedor
+JOIN filial   f ON f.id_filial   = v.id_filial
+WHERE n.status = 'Finalizado'
+GROUP BY f.id_filial, f.nome_unidade, DATE_TRUNC('month', n.data_venda)
+ORDER BY f.nome_unidade, periodo DESC;
+
+-- vw_desempenho_vendedores
+-- Ranking de vendedores por valor de notas finalizadas
+
+CREATE OR REPLACE VIEW vw_desempenho_vendedores AS
+SELECT
+    f.id_filial,
+    f.nome_unidade                            AS filial,
+    v.id_vendedor,
+    v.nome                                    AS vendedor,
+    v.cargo,
+    v.ativo,
+    COUNT(DISTINCT n.id_nota)                 AS total_notas,
+    COALESCE(SUM(n.valor_total), 0)           AS faturamento_total,
+    COALESCE(ROUND(AVG(n.valor_total), 2), 0) AS ticket_medio,
+    RANK() OVER (
+        PARTITION BY f.id_filial
+        ORDER BY COALESCE(SUM(n.valor_total), 0) DESC
+    )                                         AS ranking_filial
+FROM vendedor v
+JOIN filial f ON f.id_filial = v.id_filial
+LEFT JOIN nota n ON n.id_vendedor = v.id_vendedor AND n.status = 'Finalizado'
+GROUP BY f.id_filial, f.nome_unidade, v.id_vendedor, v.nome, v.cargo, v.ativo
+ORDER BY f.nome_unidade, ranking_filial;
+
+
+-- vw_faturamento_categoria
+-- Total vendido por categoria de peça por filial
+
+CREATE OR REPLACE VIEW vw_faturamento_categoria AS
+SELECT
+    f.id_filial,
+    f.nome_unidade                          AS filial,
+    cat.id_categoria,
+    cat.nome_categoria                      AS categoria,
+    COUNT(DISTINCT np.id_peca)              AS total_skus_vendidos,
+    SUM(np.quantidade)                      AS unidades_vendidas,
+    SUM(np.quantidade * np.valor_vendido)   AS faturamento_total,
+    ROUND(AVG(np.valor_vendido), 2)         AS preco_medio_vendido
+FROM nota_peca np
+JOIN nota      n   ON n.id_nota       = np.id_nota
+JOIN peca      p   ON p.id_peca       = np.id_peca
+JOIN categoria cat ON cat.id_categoria = p.id_categoria
+JOIN vendedor  v   ON v.id_vendedor   = n.id_vendedor
+JOIN filial    f   ON f.id_filial     = v.id_filial
+WHERE n.status = 'Finalizado'
+GROUP BY f.id_filial, f.nome_unidade, cat.id_categoria, cat.nome_categoria
+ORDER BY f.nome_unidade, faturamento_total DESC;
+
+
+-- vw_pecas_mais_vendidas
+-- Ranking de peças por volume e faturamento por filial
+
+CREATE OR REPLACE VIEW vw_pecas_mais_vendidas AS
+SELECT
+    f.id_filial,
+    f.nome_unidade                          AS filial,
+    p.id_peca,
+    p.nome_peca                             AS peca,
+    cat.nome_categoria                      AS categoria,
+    p.estado_conservacao,
+    SUM(np.quantidade)                      AS unidades_vendidas,
+    SUM(np.quantidade * np.valor_vendido)   AS faturamento_total,
+    RANK() OVER (
+        PARTITION BY f.id_filial
+        ORDER BY SUM(np.quantidade) DESC
+    )                                       AS ranking_filial
+FROM nota_peca np
+JOIN nota      n   ON n.id_nota       = np.id_nota
+JOIN peca      p   ON p.id_peca       = np.id_peca
+JOIN categoria cat ON cat.id_categoria = p.id_categoria
+JOIN vendedor  v   ON v.id_vendedor   = n.id_vendedor
+JOIN filial    f   ON f.id_filial     = v.id_filial
+WHERE n.status = 'Finalizado'
+GROUP BY f.id_filial, f.nome_unidade, p.id_peca, p.nome_peca, cat.nome_categoria, p.estado_conservacao
+ORDER BY f.nome_unidade, ranking_filial;
+
+
+-- vw_historico_vendas_vendedor
+-- Detalhe de cada venda por vendedor para acompanhamento individual
+
+CREATE OR REPLACE VIEW vw_historico_vendas_vendedor AS
+SELECT
+    v.id_vendedor,
+    v.nome                          AS vendedor,
+    v.cargo,
+    f.nome_unidade                  AS filial,
+    n.id_nota,
+    n.data_venda,
+    n.forma_pagamento,
+    cl.nome                         AS cliente,
+    n.valor_total,
+    COUNT(np.id_peca)               AS total_itens
+FROM nota n
+JOIN vendedor  v  ON v.id_vendedor = n.id_vendedor
+JOIN filial    f  ON f.id_filial   = v.id_filial
+JOIN cliente   cl ON cl.id_cliente = n.id_cliente
+JOIN nota_peca np ON np.id_nota    = n.id_nota
+WHERE n.status = 'Finalizado'
+GROUP BY
+    v.id_vendedor, v.nome, v.cargo,
+    f.nome_unidade,
+    n.id_nota, n.data_venda, n.forma_pagamento,
+    cl.nome, n.valor_total
+ORDER BY v.nome, n.data_venda DESC;
+
+
+-- vw_clientes_frequentes
+-- Clientes com maior volume de compras finalizadas
+
+CREATE OR REPLACE VIEW vw_clientes_frequentes AS
+SELECT
+    cl.id_cliente,
+    cl.nome                          AS cliente,
+    cl.telefone,
+    cl.email,
+    COUNT(DISTINCT n.id_nota)        AS total_compras,
+    SUM(n.valor_total)               AS gasto_total,
+    ROUND(AVG(n.valor_total), 2)     AS ticket_medio,
+    MAX(n.data_venda)                AS ultima_compra
+FROM cliente cl
+JOIN nota n ON n.id_cliente = cl.id_cliente
+WHERE n.status = 'Finalizado'
+GROUP BY cl.id_cliente, cl.nome, cl.telefone, cl.email
+ORDER BY gasto_total DESC;
+
+
+-- ------------------------------------------------------------
+--  ADMIN
+-- ------------------------------------------------------------
+
+-- vw_auditoria_notas
+-- Todas as notas sem filtro de filial com status, vendedor e valores
+
+CREATE OR REPLACE VIEW vw_auditoria_notas AS
+SELECT
+    n.id_nota,
+    n.data_criacao,
+    n.data_venda,
+    n.status,
+    n.forma_pagamento,
+    n.valor_total,
+    f.id_filial,
+    f.nome_unidade                  AS filial,
+    v.id_vendedor,
+    v.nome                          AS vendedor,
+    v.cargo,
+    cl.id_cliente,
+    cl.nome                         AS cliente,
+    COUNT(np.id_peca)               AS total_itens
+FROM nota n
+JOIN vendedor  v  ON v.id_vendedor  = n.id_vendedor
+JOIN filial    f  ON f.id_filial    = v.id_filial
+JOIN cliente   cl ON cl.id_cliente  = n.id_cliente
+LEFT JOIN nota_peca np ON np.id_nota = n.id_nota
+GROUP BY
+    n.id_nota, n.data_criacao, n.data_venda, n.status,
+    n.forma_pagamento, n.valor_total,
+    f.id_filial, f.nome_unidade,
+    v.id_vendedor, v.nome, v.cargo,
+    cl.id_cliente, cl.nome
+ORDER BY n.data_criacao DESC;
+
+
+-- vw_resumo_global
+-- Consolidado de vendas e estoque cruzando todas as filiais
+
+CREATE OR REPLACE VIEW vw_resumo_global AS
+SELECT
+    f.id_filial,
+    f.nome_unidade                              AS filial,
+    f.cidade,
+
+    COUNT(DISTINCT p.id_peca)                   AS total_skus,
+    COALESCE(SUM(p.quantidade), 0)              AS total_unidades_estoque,
+    COALESCE(SUM(p.quantidade * p.valor), 0)    AS valor_estoque,
+
+    COUNT(DISTINCT n.id_nota)                   AS total_notas_finalizadas,
+    COALESCE(SUM(n.valor_total), 0)             AS faturamento_total,
+    COALESCE(ROUND(AVG(n.valor_total), 2), 0)   AS ticket_medio,
+
+    COUNT(DISTINCT v.id_vendedor)               AS total_vendedores,
+    COUNT(DISTINCT v.id_vendedor)
+        FILTER (WHERE v.ativo = TRUE)           AS vendedores_ativos
+FROM filial f
+LEFT JOIN peca     p ON p.id_filial   = f.id_filial
+LEFT JOIN vendedor v ON v.id_filial   = f.id_filial
+LEFT JOIN nota     n ON n.id_vendedor = v.id_vendedor
+                    AND n.status      = 'Finalizado'
+GROUP BY f.id_filial, f.nome_unidade, f.cidade
+ORDER BY faturamento_total DESC;
+
+-- ============================================================
+--  DCL — AutoRecicla
+-- ============================================================
+
+
+-- ------------------------------------------------------------
+--  CRIAÇÃO DOS ROLES
+-- ------------------------------------------------------------
+
+CREATE ROLE role_vendedor;
+CREATE ROLE role_gerente;
+CREATE ROLE role_admin;
+
+
+-- ------------------------------------------------------------
+--  VENDEDOR
+--  Pode consultar estoque, compatibilidade e histórico,
+--  abrir/cancelar notas e adicionar itens.
+-- ------------------------------------------------------------
+
+-- Views
+GRANT SELECT ON vw_estoque_filial          TO role_vendedor;
+GRANT SELECT ON vw_historico_cliente       TO role_vendedor;
+GRANT SELECT ON vw_compatibilidade_pecas   TO role_vendedor;
+GRANT SELECT ON vw_notas_abertas           TO role_vendedor;
+GRANT SELECT ON vw_estoque_baixo           TO role_vendedor;
+
+-- Funções
+GRANT EXECUTE ON FUNCTION fn_registrar_peca(VARCHAR, NUMERIC, VARCHAR, INT, INT, INT, INT)       TO role_vendedor;
+GRANT EXECUTE ON FUNCTION fn_registrar_comp_peca(INT, INT, SMALLINT, SMALLINT, INT)              TO role_vendedor;
+GRANT EXECUTE ON FUNCTION fn_ajustar_estoque(INT, INT, INT)                                      TO role_vendedor;
+GRANT EXECUTE ON FUNCTION fn_abrir_nota(INT, INT, INT)                                           TO role_vendedor;
+GRANT EXECUTE ON FUNCTION fn_adicionar_item_nota(INT, INT, INT, NUMERIC)                         TO role_vendedor;
+GRANT EXECUTE ON FUNCTION fn_finalizar_nota(INT, VARCHAR, INT)                                   TO role_vendedor;
+GRANT EXECUTE ON FUNCTION fn_cancelar_nota(INT, INT)                                             TO role_vendedor;
+
+
+-- ------------------------------------------------------------
+--  GERENTE
+--  Herda tudo do Vendedor e adiciona gestão de equipe
+--  e acesso às views analíticas da filial.
+-- ------------------------------------------------------------
+
+GRANT role_vendedor TO role_gerente;
+
+-- Views adicionais
+GRANT SELECT ON vw_resumo_vendas_filial      TO role_gerente;
+GRANT SELECT ON vw_desempenho_vendedores     TO role_gerente;
+GRANT SELECT ON vw_faturamento_categoria     TO role_gerente;
+GRANT SELECT ON vw_pecas_mais_vendidas       TO role_gerente;
+GRANT SELECT ON vw_historico_vendas_vendedor TO role_gerente;
+GRANT SELECT ON vw_clientes_frequentes       TO role_gerente;
+
+-- Funções adicionais
+GRANT EXECUTE ON FUNCTION fn_contratar_vendedor(VARCHAR, VARCHAR, INT, INT)                      TO role_gerente;
+GRANT EXECUTE ON FUNCTION fn_demitir_vendedor(VARCHAR, INT)                                      TO role_gerente;
+GRANT EXECUTE ON FUNCTION fn_transferir_vendedor(VARCHAR, INT, INT, INT)                         TO role_gerente;
+
+
+-- ------------------------------------------------------------
+--  ADMIN
+--  Herda tudo do Gerente e adiciona gestão global:
+--  filiais, marcas, modelos, categorias e auditoria.
+-- ------------------------------------------------------------
+
+GRANT role_gerente TO role_admin;
+
+-- Views adicionais
+GRANT SELECT ON vw_auditoria_notas TO role_admin;
+GRANT SELECT ON vw_resumo_global   TO role_admin;
+
+-- Funções adicionais
+GRANT EXECUTE ON FUNCTION fn_criar_filial(VARCHAR, VARCHAR, VARCHAR, VARCHAR, INT)               TO role_admin;
+GRANT EXECUTE ON FUNCTION fn_registrar_categoria(VARCHAR, INT)                                   TO role_admin;
+GRANT EXECUTE ON FUNCTION fn_registrar_marca(VARCHAR, INT)                                       TO role_admin;
+GRANT EXECUTE ON FUNCTION fn_registrar_modelo(VARCHAR, INT, INT)                                 TO role_admin;
+
+
+-- ------------------------------------------------------------
+--  CRIAÇÃO DE USUÁRIOS E ATRIBUIÇÃO DE ROLES
+--  (exemplos — substituir senhas em produção)
+-- ------------------------------------------------------------
+
+CREATE USER usr_vendedor WITH PASSWORD 'trocar_em_producao';
+CREATE USER usr_gerente  WITH PASSWORD 'trocar_em_producao';
+CREATE USER usr_admin    WITH PASSWORD 'trocar_em_producao';
+
+GRANT role_vendedor TO usr_vendedor;
+GRANT role_gerente  TO usr_gerente;
+GRANT role_admin    TO usr_admin;
+
+
+-- ------------------------------------------------------------
+--  ACESSO ÀS TABELAS (somente leitura onde necessário)
+--  As funções fazem os INSERTs/UPDATEs — os roles não
+--  precisam de escrita direta nas tabelas.
+-- ------------------------------------------------------------
+
+-- Tabelas de consulta pública (catálogo)
+
+GRANT SELECT ON marca          TO role_vendedor;
+GRANT SELECT ON modelo         TO role_vendedor;
+GRANT SELECT ON categoria      TO role_vendedor;
+GRANT SELECT ON filial         TO role_vendedor;
+GRANT SELECT ON cliente        TO role_vendedor;
+
+-- Tabelas operacionais (leitura para os triggers funcionarem via funções)
+GRANT SELECT ON peca           TO role_vendedor;
+GRANT SELECT ON compatibilidade TO role_vendedor;
+GRANT SELECT ON nota           TO role_vendedor;
+GRANT SELECT ON nota_peca      TO role_vendedor;
+
+GRANT EXECUTE ON FUNCTION fn_registrar_cliente(
+    VARCHAR,
+    VARCHAR,
+    VARCHAR,
+    VARCHAR
+) TO role_vendedor;
+-- Sequences (necessário para SERIAL funcionar via funções)
+GRANT USAGE ON SEQUENCE filial_id_filial_seq         TO role_admin;
+GRANT USAGE ON SEQUENCE vendedor_id_vendedor_seq      TO role_gerente;
+GRANT USAGE ON SEQUENCE cliente_id_cliente_seq        TO role_vendedor;
+GRANT USAGE ON SEQUENCE marca_id_marca_seq            TO role_admin;
+GRANT USAGE ON SEQUENCE modelo_id_modelo_seq          TO role_admin;
+GRANT USAGE ON SEQUENCE categoria_id_categoria_seq    TO role_admin;
+GRANT USAGE ON SEQUENCE peca_id_peca_seq              TO role_vendedor;
+GRANT USAGE ON SEQUENCE compatibilidade_id_comp_seq   TO role_vendedor;
+GRANT USAGE ON SEQUENCE nota_id_nota_seq              TO role_vendedor;
