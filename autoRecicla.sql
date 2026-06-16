@@ -1161,10 +1161,6 @@ WHERE p.quantidade <= 1
 ORDER BY f.nome_unidade, p.quantidade, p.nome_peca;
 
 
--- CORREÇÃO 3: Subconsulta de peca_mais_vendida corrigida.
--- Substituído MIN(n.data_venda) por DATE_TRUNC('month', n.data_venda),
--- garantindo que a peça mais vendida seja calculada para o período correto
--- de cada linha do GROUP BY, e não sempre o primeiro mês do grupo.
 CREATE OR REPLACE VIEW vw_resumo_vendas_filial AS
 SELECT
     f.id_filial,
