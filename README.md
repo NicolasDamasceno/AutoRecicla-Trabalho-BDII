@@ -47,6 +47,7 @@ O sistema implementa os seguintes recursos nativos no SGBD (PostgreSQL) a fim de
 * `cpf` (varchar, unique)
 * `id_filial` (FK - int)
 * `ativo` (boolean, default true)
+* `cargo` (varchar)
 
 ### 3. CLIENTE
 * `id_cliente` (PK - int)
