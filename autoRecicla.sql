@@ -441,9 +441,6 @@ CREATE OR REPLACE TRIGGER tg_bloquear_delete_nota
     EXECUTE FUNCTION fn_bloquear_delete_nota();
 
 
--- ============================================================
---  FUNÇÃO AUXILIAR
--- ============================================================
 
 CREATE OR REPLACE FUNCTION fn_buscar_filial_executante(p_id_executante INT)
 RETURNS INT LANGUAGE plpgsql AS $$
@@ -464,9 +461,6 @@ END;
 $$;
 
 
--- ============================================================
---  FUNÇÕES DE NEGÓCIO
--- ============================================================
 
 CREATE OR REPLACE FUNCTION fn_criar_filial(
     p_nome_filial   VARCHAR,
@@ -1056,14 +1050,7 @@ BEGIN
     RAISE NOTICE 'Nota % cancelada.', p_id_nota;
 END;
 $$;
--- ============================================================
---  VIEWS — AutoRecicla
--- ============================================================
 
-
--- ------------------------------------------------------------
---  VENDEDOR
--- ------------------------------------------------------------
 
 -- vw_estoque_filial
 -- Peças com quantidade, estado e valor por filial
@@ -1183,9 +1170,7 @@ WHERE p.quantidade <= 1
 ORDER BY f.nome_unidade, p.quantidade, p.nome_peca;
 
 
--- ------------------------------------------------------------
---  GERENTE
--- ------------------------------------------------------------
+
 
 -- vw_resumo_vendas_filial
 -- Total vendido, ticket médio e peça mais vendida por filial/período
@@ -1342,9 +1327,7 @@ GROUP BY cl.id_cliente, cl.nome, cl.telefone, cl.email
 ORDER BY gasto_total DESC;
 
 
--- ------------------------------------------------------------
---  ADMIN
--- ------------------------------------------------------------
+
 
 -- vw_auditoria_notas
 -- Todas as notas sem filtro de filial com status, vendedor e valores
@@ -1407,25 +1390,13 @@ LEFT JOIN nota     n ON n.id_vendedor = v.id_vendedor
 GROUP BY f.id_filial, f.nome_unidade, f.cidade
 ORDER BY faturamento_total DESC;
 
--- ============================================================
---  DCL — AutoRecicla
--- ============================================================
 
-
--- ------------------------------------------------------------
---  CRIAÇÃO DOS ROLES
--- ------------------------------------------------------------
 
 CREATE ROLE role_vendedor;
 CREATE ROLE role_gerente;
 CREATE ROLE role_admin;
 
 
--- ------------------------------------------------------------
---  VENDEDOR
---  Pode consultar estoque, compatibilidade e histórico,
---  abrir/cancelar notas e adicionar itens.
--- ------------------------------------------------------------
 
 -- Views
 GRANT SELECT ON vw_estoque_filial          TO role_vendedor;
@@ -1444,11 +1415,7 @@ GRANT EXECUTE ON FUNCTION fn_finalizar_nota(INT, VARCHAR, INT)                  
 GRANT EXECUTE ON FUNCTION fn_cancelar_nota(INT, INT)                                             TO role_vendedor;
 
 
--- ------------------------------------------------------------
---  GERENTE
---  Herda tudo do Vendedor e adiciona gestão de equipe
---  e acesso às views analíticas da filial.
--- ------------------------------------------------------------
+
 
 GRANT role_vendedor TO role_gerente;
 
@@ -1466,11 +1433,7 @@ GRANT EXECUTE ON FUNCTION fn_demitir_vendedor(VARCHAR, INT)                     
 GRANT EXECUTE ON FUNCTION fn_transferir_vendedor(VARCHAR, INT, INT, INT)                         TO role_gerente;
 
 
--- ------------------------------------------------------------
---  ADMIN
---  Herda tudo do Gerente e adiciona gestão global:
---  filiais, marcas, modelos, categorias e auditoria.
--- ------------------------------------------------------------
+
 
 GRANT role_gerente TO role_admin;
 
@@ -1485,10 +1448,7 @@ GRANT EXECUTE ON FUNCTION fn_registrar_marca(VARCHAR, INT)                      
 GRANT EXECUTE ON FUNCTION fn_registrar_modelo(VARCHAR, INT, INT)                                 TO role_admin;
 
 
--- ------------------------------------------------------------
---  CRIAÇÃO DE USUÁRIOS E ATRIBUIÇÃO DE ROLES
---  (exemplos — substituir senhas em produção)
--- ------------------------------------------------------------
+-
 
 CREATE USER usr_vendedor WITH PASSWORD 'trocar_em_producao';
 CREATE USER usr_gerente  WITH PASSWORD 'trocar_em_producao';
@@ -1499,11 +1459,6 @@ GRANT role_gerente  TO usr_gerente;
 GRANT role_admin    TO usr_admin;
 
 
--- ------------------------------------------------------------
---  ACESSO ÀS TABELAS (somente leitura onde necessário)
---  As funções fazem os INSERTs/UPDATEs — os roles não
---  precisam de escrita direta nas tabelas.
--- ------------------------------------------------------------
 
 -- Tabelas de consulta pública (catálogo)
 
