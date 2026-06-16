@@ -1445,3 +1445,444 @@ CREATE USER usr_admin    WITH PASSWORD 'trocar_em_producao';
 GRANT role_vendedor TO usr_vendedor;
 GRANT role_gerente  TO usr_gerente;
 GRANT role_admin    TO usr_admin;
+
+-- ============================================================
+--  AUTORECICLA — SCRIPT DE TESTES
+--  Ordem: Admin → Gerente → Vendedor → Clientes → Catálogo → Notas
+-- ============================================================
+
+
+-- ============================================================
+--  0 — INSERT DIRETO DO ADMIN NO BANCO
+-- ============================================================
+
+-- Filial provisória para ancorar o admin (será substituída pelas funções)
+INSERT INTO filial (nome_unidade, cidade, endereco, cnpj)
+VALUES ('SEDE', 'Teresina', 'Rua Sede, 0', '00.000.000/0000-00');
+
+-- Admin do sistema (id_vendedor = 1)
+INSERT INTO vendedor (nome, cpf, id_filial, ativo, cargo)
+VALUES ('Carlos Admin', '000.000.000-00', 1, TRUE, 'Admin');
+
+
+-- ============================================================
+--  1. fn_criar_filial
+-- ============================================================
+
+-- ERRO: executante não é Admin (id=1 é Admin, mas vamos simular com id inválido)
+fn_criar_filial('Filial Norte', 'Teresina', 'Av. Norte, 100', '12.345.678/0001-99', 99);
+
+
+-- ERRO: CNPJ com tamanho inválido
+fn_criar_filial('Filial Norte', 'Teresina', 'Av. Norte, 100', '12.345', 1);
+
+
+-- SUCESSO: Filial 1 — Norte (id_filial = 2, pois SEDE = 1)
+fn_criar_filial('AutoRecicla Norte', 'Teresina', 'Av. Raul Lopes, 1500', '12.345.678/0001-99', 1);
+
+
+
+-- SUCESSO: Filial 2 — Sul (id_filial = 3)
+fn_criar_filial('AutoRecicla Sul', 'Teresina', 'Av. Nossa Sra. de Fátima, 800', '98.765.432/0001-11', 1);
+
+
+
+-- ERRO: nome de filial duplicado
+fn_criar_filial('AutoRecicla Norte', 'Timon', 'Rua X, 10', '11.111.111/0001-11', 1);
+
+
+
+-- ============================================================
+--  2. fn_registrar_categoria, fn_registrar_marca, fn_registrar_modelo
+-- ============================================================
+
+-- ERRO: categoria duplicada
+fn_registrar_categoria('Motor', 1);
+fn_registrar_categoria('Motor', 1);
+
+
+-- SUCESSO: categorias necessárias
+fn_registrar_categoria('Freio', 1);
+fn_registrar_categoria('Suspensão', 1);
+fn_registrar_categoria('Elétrica', 1);
+
+
+-- ERRO: marca com executante sem cargo Admin
+fn_registrar_marca('Chevrolet', 99);
+
+
+-- SUCESSO: marcas
+fn_registrar_marca('Chevrolet', 1);
+fn_registrar_marca('Ford',      1);
+fn_registrar_marca('Volkswagen',1); 
+fn_registrar_marca('Fiat',      1);
+
+-- ERRO: marca duplicada
+fn_registrar_marca('Chevrolet', 1);
+
+
+-- ERRO: modelo com marca inexistente
+fn_registrar_modelo('Corsa', 99, 1);
+
+
+-- SUCESSO: modelos
+-- Chevrolet (id_marca=1): Corsa, Onix
+fn_registrar_modelo('Corsa', 1, 1);
+fn_registrar_modelo('Onix',  1, 1); 
+-- Ford (id_marca=2): Ka, Fiesta
+fn_registrar_modelo('Ka',     2, 1);
+fn_registrar_modelo('Fiesta', 2, 1);
+-- Volkswagen (id_marca=3): Gol, Polo
+fn_registrar_modelo('Gol',  3, 1);
+fn_registrar_modelo('Polo', 3, 1);
+-- Fiat (id_marca=4): Uno, Palio
+fn_registrar_modelo('Uno',   4, 1);
+fn_registrar_modelo('Palio', 4, 1);
+
+-- ERRO: modelo duplicado na mesma marca
+fn_registrar_modelo('Corsa', 1, 1);
+
+
+
+-- ============================================================
+--  3. fn_contratar_vendedor — Gerentes e Vendedores
+-- ============================================================
+
+-- ERRO: vendedor sem permissão tentando contratar
+fn_contratar_vendedor('Fulano', '111.111.111-11', 2, 99);
+
+
+-- ERRO: CPF com tamanho inválido
+fn_contratar_vendedor('Fulano', '111', 2, 1);
+
+
+-- ERRO: filial inexistente
+fn_contratar_vendedor('Fulano', '111.111.111-11', 99, 1);
+
+
+-- SUCESSO: Gerente da Filial Norte (id=2) — Admin contrata, cargo ajustado manual
+SELECT fn_contratar_vendedor('Mariana Gerente Norte', '111.222.333-44', 2, 1);
+UPDATE vendedor SET cargo = 'Gerente' WHERE cpf = '111.222.333-44';
+    
+
+
+-- SUCESSO: Gerente da Filial Sul (id=3)
+SELECT fn_contratar_vendedor('Roberto Gerente Sul', '555.666.777-88', 3, 1);
+UPDATE vendedor SET cargo = 'Gerente' WHERE cpf = '555.666.777-88';
+    
+-- ERRO: CPF duplicado
+fn_contratar_vendedor('Outro Nome', '111.222.333-44', 2, 1);
+
+
+-- ERRO: Gerente Norte (id=2) tentando contratar para a Filial Sul (id=3)
+fn_contratar_vendedor('Invasor', '000.111.222-33', 3, 2);
+
+
+-- SUCESSO: 3 Vendedores da Filial Norte (Gerente Norte id=2 contrata)
+fn_contratar_vendedor('Ana Vendedora Norte',    '100.200.300-40', 2, 2);
+fn_contratar_vendedor('Bruno Vendedor Norte',   '200.300.400-50', 2, 2); 
+fn_contratar_vendedor('Camila Vendedora Norte', '300.400.500-60', 2, 2);
+
+-- SUCESSO: 3 Vendedores da Filial Sul (Gerente Sul id=3 contrata)
+fn_contratar_vendedor('Diego Vendedor Sul',   '400.500.600-70', 3, 3);
+fn_contratar_vendedor('Eduarda Vendedora Sul','500.600.700-80', 3, 3);
+fn_contratar_vendedor('Felipe Vendedor Sul',  '600.700.800-90', 3, 3); 
+
+
+-- ============================================================
+--  4. fn_registrar_cliente   
+-- ============================================================
+
+-- ERRO: cliente com CPF/CNPJ duplicado
+fn_registrar_cliente('João Silva',    '123.456.789-00', '(86) 99111-1111', 'joao@email.com');
+
+
+fn_registrar_cliente('João Repetido', '123.456.789-00', NULL, NULL);
+
+
+-- SUCESSO: demais clientes (Filial Norte)
+fn_registrar_cliente('Maria Oliveira',  '234.567.890-11', '(86) 99222-2222', 'maria@email.com');  
+fn_registrar_cliente('Pedro Santos',    '345.678.901-22', '(86) 99333-3333', NULL);               
+fn_registrar_cliente('Lúcia Ferreira',  '456.789.012-33', NULL,              'lucia@email.com');  
+
+-- SUCESSO: clientes usados na Filial Sul
+fn_registrar_cliente('Carlos Pereira',  '567.890.123-44', '(86) 99444-4444', 'carlos@email.com');
+fn_registrar_cliente('Fernanda Lima',   '678.901.234-55', '(86) 99555-5555', NULL);             
+fn_registrar_cliente('Ricardo Souza',   '789.012.345-66', NULL,              'rica@email.com');
+fn_registrar_cliente('Patrícia Costa',  '890.123.456-77', '(86) 99666-6666', 'pati@email.com');
+
+
+-- ============================================================
+--  5. fn_registrar_peca
+-- ============================================================
+
+-- ERRO: valor negativo
+fn_registrar_peca('Kit Pistão', -50.00, 'Novo', 5, 1, 2, 4);
+
+
+-- ERRO: estado de conservação inválido
+fn_registrar_peca('Kit Pistão', 180.00, 'Quebrado', 5, 1, 2, 4);
+
+
+-- ERRO: categoria inexistente
+fn_registrar_peca('Kit Pistão', 180.00, 'Novo', 5, 99, 2, 4);
+
+
+-- ERRO: executante tentando cadastrar peça em outra filial
+fn_registrar_peca('Kit Pistão', 180.00, 'Novo', 5, 1, 3, 4);
+
+
+-- SUCESSO: Peça 1 — Kit Pistão Corsa | Filial Norte | 3 estados
+fn_registrar_peca('Kit Pistão Corsa', 180.00, 'Novo',     10, 1, 2, 4);
+fn_registrar_peca('Kit Pistão Corsa', 120.00, 'Seminovo',  6, 1, 2, 4);
+fn_registrar_peca('Kit Pistão Corsa',  80.00, 'Usado',     4, 1, 2, 4);
+
+-- SUCESSO: Peça 2 — Disco de Freio Gol | Filial Norte | 3 estados
+fn_registrar_peca('Disco de Freio Gol', 95.00, 'Novo',     8, 2, 2, 4);
+fn_registrar_peca('Disco de Freio Gol', 65.00, 'Seminovo', 5, 2, 2, 4);
+fn_registrar_peca('Disco de Freio Gol', 40.00, 'Usado',    3, 2, 2, 4);
+
+-- ERRO: peça duplicada (mesmo nome + estado + filial)
+fn_registrar_peca('Kit Pistão Corsa', 200.00, 'Novo', 2, 1, 2, 4);
+
+
+-- SUCESSO: Peça 1 — Kit Pistão Corsa | Filial Sul | 3 estados
+fn_registrar_peca('Kit Pistão Corsa', 185.00, 'Novo',     8, 1, 3, 7);
+fn_registrar_peca('Kit Pistão Corsa', 125.00, 'Seminovo', 5, 1, 3, 7);
+fn_registrar_peca('Kit Pistão Corsa',  85.00, 'Usado',    3, 1, 3, 7);
+
+-- SUCESSO: Peça 2 — Disco de Freio Gol | Filial Sul | 3 estados
+fn_registrar_peca('Disco de Freio Gol', 98.00, 'Novo',     6, 2, 3, 7);
+fn_registrar_peca('Disco de Freio Gol', 68.00, 'Seminovo', 4, 2, 3, 7);
+fn_registrar_peca('Disco de Freio Gol', 42.00, 'Usado',    2, 2, 3, 7);
+
+
+-- ============================================================
+--  6. fn_registrar_comp_peca
+-- ============================================================
+
+-- ERRO: peça inexistente
+fn_registrar_comp_peca(99, 1, 2005::SMALLINT, 2015::SMALLINT, 4);
+
+-- ERRO: modelo inexistente
+fn_registrar_comp_peca(1, 99, 2005::SMALLINT, 2015::SMALLINT, 4);
+
+
+-- ERRO: ano_inicio maior que ano_fim
+fn_registrar_comp_peca(1, 1, 2020::SMALLINT, 2010::SMALLINT, 4);
+
+
+-- ERRO: executante de outra filial tentando alterar peça da Norte
+fn_registrar_comp_peca(1, 1, 2005::SMALLINT, 2015::SMALLINT, 7);
+
+
+-- SUCESSO: Kit Pistão Corsa (Filial Norte) → Corsa (2005-2012) e Onix (2013-2023)
+fn_registrar_comp_peca(1, 1, 2005::SMALLINT, 2012::SMALLINT, 4); -- Novo    + Corsa
+fn_registrar_comp_peca(2, 1, 2005::SMALLINT, 2012::SMALLINT, 4); -- Seminovo+ Corsa
+fn_registrar_comp_peca(3, 1, 2005::SMALLINT, 2012::SMALLINT, 4); -- Usado   + Corsa
+fn_registrar_comp_peca(1, 2, 2013::SMALLINT, 2023::SMALLINT, 4); -- Novo    + Onix
+fn_registrar_comp_peca(2, 2, 2013::SMALLINT, 2023::SMALLINT, 4); -- Seminovo+ Onix
+fn_registrar_comp_peca(3, 2, 2013::SMALLINT, 2023::SMALLINT, 4); -- Usado   + Onix
+
+-- SUCESSO: Disco de Freio Gol (Filial Norte) → Gol (2000-2015) e Polo (2008-2022)
+fn_registrar_comp_peca(4, 5, 2000::SMALLINT, 2015::SMALLINT, 4);
+fn_registrar_comp_peca(5, 5, 2000::SMALLINT, 2015::SMALLINT, 4);
+fn_registrar_comp_peca(6, 5, 2000::SMALLINT, 2015::SMALLINT, 4);
+fn_registrar_comp_peca(4, 6, 2008::SMALLINT, 2022::SMALLINT, 4);
+fn_registrar_comp_peca(5, 6, 2008::SMALLINT, 2022::SMALLINT, 4);
+fn_registrar_comp_peca(6, 6, 2008::SMALLINT, 2022::SMALLINT, 4);
+
+-- ERRO: compatibilidade duplicada
+fn_registrar_comp_peca(1, 1, 2005::SMALLINT, 2012::SMALLINT, 4);
+
+
+-- SUCESSO: Kit Pistão Corsa (Filial Sul) → Corsa e Onix
+fn_registrar_comp_peca(7,  1, 2005::SMALLINT, 2012::SMALLINT, 7);
+fn_registrar_comp_peca(8,  1, 2005::SMALLINT, 2012::SMALLINT, 7);
+fn_registrar_comp_peca(9,  1, 2005::SMALLINT, 2012::SMALLINT, 7); 
+fn_registrar_comp_peca(7,  2, 2013::SMALLINT, 2023::SMALLINT, 7); 
+fn_registrar_comp_peca(8,  2, 2013::SMALLINT, 2023::SMALLINT, 7); 
+fn_registrar_comp_peca(9,  2, 2013::SMALLINT, 2023::SMALLINT, 7);
+
+-- SUCESSO: Disco de Freio Gol (Filial Sul) → Gol e Polo
+fn_registrar_comp_peca(10, 5, 2000::SMALLINT, 2015::SMALLINT, 7);
+fn_registrar_comp_peca(11, 5, 2000::SMALLINT, 2015::SMALLINT, 7);
+fn_registrar_comp_peca(12, 5, 2000::SMALLINT, 2015::SMALLINT, 7);
+fn_registrar_comp_peca(10, 6, 2008::SMALLINT, 2022::SMALLINT, 7);
+fn_registrar_comp_peca(11, 6, 2008::SMALLINT, 2022::SMALLINT, 7);
+fn_registrar_comp_peca(12, 6, 2008::SMALLINT, 2022::SMALLINT, 7);
+
+
+-- ============================================================
+--  7. fn_abrir_nota, fn_adicionar_item_nota,
+--     fn_finalizar_nota, fn_cancelar_nota
+-- ============================================================
+
+-- ERRO: abrir nota com vendedor inexistente
+fn_abrir_nota(1, 99, 4);
+
+-- ERRO: executante tentando abrir nota para vendedor de outra filial
+fn_abrir_nota(1, 7, 4);
+
+
+-- ERRO: cliente inexistente
+fn_abrir_nota(99, 4, 4);
+
+
+-- ── NOTA 1: Filial Norte — Ana vende para João (será FINALIZADA) ──────────
+
+-- Abre nota (id_nota=1)
+SELECT fn_abrir_nota(1, 4, 4);
+fn_adicionar_item_nota(1, 7, 2, 185.00);
+fn_adicionar_item_nota(1, 1, 0, 180.00);
+
+
+-- SUCESSO: adiciona Kit Pistão Novo (peça 1) e Disco Freio Novo (peça 4)
+fn_adicionar_item_nota(v_nota, 1, 2, 180.00);
+fn_adicionar_item_nota(v_nota, 4, 1,  95.00);
+fn_finalizar_nota(v_nota, 'Cheque', 4);
+fn_finalizar_nota(v_nota, 'Pix', 4);
+
+
+-- ── NOTA 2: Filial Norte — Bruno vende para Maria (será CANCELADA) ────────
+SELECT fn_abrir_nota(2, 5, 5);
+
+fn_adicionar_item_nota(2, 2, 1, 120.00); -- Kit Pistão Seminovo
+fn_adicionar_item_nota(2, 5, 2,  65.00); -- Disco Freio Seminovo
+
+fn_cancelar_nota(2, 7); -- Diego é da Sul
+fn_cancelar_nota(2, 5);
+
+
+-- ── NOTA 3: Filial Norte — Camila vende para Pedro (FINALIZADA) ───────────
+SELECT fn_abrir_nota(3, 6, 6);
+fn_adicionar_item_nota(3, 3, 1, 80.00);  -- Kit Pistão Usado
+fn_adicionar_item_nota(3, 6, 1, 40.00);  -- Disco Freio Usado
+fn_finalizar_nota(3, 'Cartão de Crédito', 6);
+
+
+
+-- ── NOTA 4: Filial Sul — Diego vende para Carlos (FINALIZADA) ─────────────
+SELECT fn_abrir_nota(5, 7, 7);
+fn_adicionar_item_nota(5, 7,  2, 185.00); -- Kit Pistão Novo Sul
+fn_adicionar_item_nota(5, 10, 1,  98.00); -- Disco Freio Novo Sul
+fn_finalizar_nota(5, 'Dinheiro', 7);
+
+
+
+
+-- ── NOTA 5: Filial Sul — Eduarda vende para Fernanda (CANCELADA) ──────────
+SELECT fn_abrir_nota(6, 8, 8);
+fn_adicionar_item_nota(6, 8,  1, 125.00); -- Kit Pistão Seminovo Sul
+fn_adicionar_item_nota(6, 11, 2,  68.00); -- Disco Freio Seminovo Sul
+fn_cancelar_nota(6, 8);
+
+
+
+-- ── NOTA 6: Filial Sul — Felipe vende para Ricardo (FINALIZADA) ───────────
+
+SELECT fn_abrir_nota(7, 9, 9);
+fn_adicionar_item_nota(7, 9,  1,  85.00); -- Kit Pistão Usado Sul
+fn_adicionar_item_nota(7, 12, 1,  42.00); -- Disco Freio Usado Sul
+fn_finalizar_nota(7, 'Boleto', 9);
+ 
+
+-- ERRO: tentar adicionar item a nota já finalizada
+fn_adicionar_item_nota(1, 4, 1, 95.00);
+
+
+-- ERRO: tentar finalizar nota já cancelada
+fn_finalizar_nota(2, 'Pix', 5);
+
+
+-- ============================================================
+--  8. fn_ajustar_estoque
+-- ============================================================
+
+-- ERRO: quantidade negativa
+fn_ajustar_estoque(1, -5, 4);
+
+-- ERRO: executante de outra filial
+fn_ajustar_estoque(1, 20, 7); -- Diego (Sul) ajustando peça da Norte
+
+
+-- SUCESSO: Ana (Norte) reabastece Kit Pistão Novo
+fn_ajustar_estoque(1, 15, 4);
+
+
+
+-- ============================================================
+--  9. fn_transferir_vendedor
+-- ============================================================
+
+-- ERRO: vendedor com notas em aberto não pode ser transferido
+v_nota := fn_abrir_nota(4, 4, 4); -- Lúcia compra com Ana
+fn_adicionar_item_nota(v_nota, 1, 1, 180.00);
+-- Tenta transferir Ana enquanto há nota aberta
+fn_transferir_vendedor('100.200.300-40', 2, 3, 2);
+
+
+-- Fecha a nota aberta do teste anterior antes de prosseguir
+
+UPDATE nota SET status = 'Cancelado'
+WHERE id_vendedor = 4 AND status = 'Aberto';
+
+
+-- ERRO: gerente tentando transferir vendedor de outra filial
+fn_transferir_vendedor('400.500.600-70', 3, 2, 2); -- Gerente Norte tentando mover Diego (Sul)
+
+
+-- SUCESSO: Admin transfere Ana da Norte para Sul
+fn_transferir_vendedor('100.200.300-40', 2, 3, 1);
+
+
+
+-- ============================================================
+--  10. fn_demitir_vendedor
+-- ============================================================
+
+-- ERRO: CPF não encontrado
+fn_demitir_vendedor('999.999.999-99', 2);
+
+
+-- ERRO: gerente tentando demitir vendedor de outra filial
+fn_demitir_vendedor('100.200.300-40', 2);
+
+
+-- SUCESSO: Gerente Sul (id=3) demite Ana (que agora está na Sul)
+fn_demitir_vendedor('100.200.300-40', 3);
+
+-- ERRO: tg_bloquear_desativacao_vendedor — vendedor com nota aberta
+v_nota := fn_abrir_nota(1, 5, 5);
+fn_adicionar_item_nota(v_nota, 2, 1, 120.00);
+fn_demitir_vendedor('200.300.400-50', 2);
+
+-- Limpa a nota aberta
+UPDATE nota SET status = 'Cancelado'
+WHERE id_vendedor = 5 AND status = 'Aberto';
+
+
+-- ============================================================
+--  VERIFICAÇÕES
+-- ============================================================
+
+SELECT '=== FILIAIS ===' AS info;
+SELECT id_filial, nome_unidade, cidade FROM filial;
+
+SELECT '=== VENDEDORES ===' AS info;
+SELECT id_vendedor, nome, cargo, id_filial, ativo FROM vendedor ORDER BY id_vendedor;
+
+SELECT '=== CLIENTES ===' AS info;
+SELECT id_cliente, nome FROM cliente;
+
+SELECT '=== ESTOQUE FILIAL NORTE ===' AS info;
+SELECT peca, estado_conservacao, quantidade, valor FROM vw_estoque_filial WHERE id_filial = 2;
+
+SELECT '=== ESTOQUE FILIAL SUL ===' AS info;
+SELECT peca, estado_conservacao, quantidade, valor FROM vw_estoque_filial WHERE id_filial = 3;
+
+SELECT '=== NOTAS ===' AS info;
+SELECT id_nota, status, forma_pagamento, valor_total, id_vendedor FROM nota ORDER BY id_nota;
+
+SELECT '=== AUDITORIA GERAL ===' AS info;
+SELECT id_nota, filial, vendedor, cliente, status, valor_total FROM vw_auditoria_notas;
