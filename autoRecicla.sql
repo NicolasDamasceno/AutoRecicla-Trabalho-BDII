@@ -1136,7 +1136,7 @@ BEGIN
 	UPDATE nota 
 	SET forma_pagamento = p_forma_pagamento, 
 	status = 'Finalizado' WHERE id_nota = p_id_nota; 
-	RAISE NOTICE 'Nota % finalizada - Pagamento: %.', p_id_nota, p_pagamento;
+	RAISE NOTICE 'Nota % finalizada - Pagamento: %.', p_id_nota, p_forma_pagamento;
 END;
 $$;
 
